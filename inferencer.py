@@ -145,9 +145,10 @@ class InterleaveInferencer:
         )
 
         unpacked_latent = self.model.generate_image(
-            past_key_values=past_key_values,
-            cfg_text_past_key_values=cfg_text_past_key_values,
-            cfg_img_past_key_values=cfg_img_past_key_values,
+            past_key_values=past_key_values, # con kv
+            cfg_text_past_key_values=cfg_text_past_key_values, # uncon_text kv
+            cfg_img_past_key_values=cfg_img_past_key_values, # uncon_img kv
+
             num_timesteps=num_timesteps,
             cfg_text_scale=cfg_text_scale,
             cfg_img_scale=cfg_img_scale,
@@ -155,7 +156,8 @@ class InterleaveInferencer:
             cfg_renorm_min=cfg_renorm_min,
             cfg_renorm_type=cfg_renorm_type,
             timestep_shift=timestep_shift,
-            **generation_input,
+            
+            **generation_input, 
             cfg_text_packed_position_ids=generation_input_cfg_text['cfg_packed_position_ids'],
             cfg_text_packed_query_indexes=generation_input_cfg_text['cfg_packed_query_indexes'],
             cfg_text_key_values_lens=generation_input_cfg_text['cfg_key_values_lens'],
@@ -226,23 +228,31 @@ class InterleaveInferencer:
     ) -> List[Union[str, Image.Image]]:
 
         output_list = []
-        gen_context = self.init_gen_context()
-        cfg_text_context = deepcopy(gen_context)
+        gen_context = self.init_gen_context() #  KV Cache (Key-Value Cache) 的容器！
+        cfg_text_context = deepcopy(gen_context) 
         cfg_img_context = deepcopy(gen_context)
 
         with torch.autocast(device_type="cuda", enabled=True, dtype=torch.bfloat16):
+            # 进门：把 GPU 模式切换成混精度
+            # with结束 = 出门：把 GPU 模式切回默认状态
             if think:
                 if understanding_output:
                     system_prompt = VLM_THINK_SYSTEM_PROMPT 
                 else:
                     system_prompt = GEN_THINK_SYSTEM_PROMPT
+                # 把system_prompt更新到 cfg_text_context 和 cfg_img_context并前向传播
+                # 而不是把它和 User Text 拼在一起：复用kvcache
+                # 为啥cfg_img_context不直接拷贝gen_context？
                 gen_context = self.update_context_text(system_prompt, gen_context)
                 cfg_img_context = self.update_context_text(system_prompt, cfg_img_context)
+
 
             for input_term in input_lists:
                 if isinstance(input_term, str):
                     cfg_text_context = deepcopy(gen_context)
+                    # 为啥这里都是传进去input_term,不应该有一个传进去空的吗？
                     gen_context = self.update_context_text(input_term, gen_context)
+                    # 哦这里是image，为啥不直接拷贝gen_context？
                     cfg_img_context = self.update_context_text(input_term, cfg_img_context)
 
                 elif isinstance(input_term, Image.Image):
